@@ -5,8 +5,14 @@ Citation verification and analysis for LaTeX papers. Given `.tex` + `.bib` files
 ## Install
 
 ```bash
-pip install bibsleuth           # core (existence checking)
-pip install 'bibsleuth[llm]'    # with LLM features (mis-citation, suggestions, contradictions)
+uv pip install bibsleuth           # core (existence checking)
+uv pip install 'bibsleuth[llm]'    # with LLM features (mis-citation, suggestions, contradictions)
+```
+
+Or as a tool:
+
+```bash
+uvx bibsleuth check paper.tex
 ```
 
 ## Usage
