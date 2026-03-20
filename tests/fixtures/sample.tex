@@ -1,0 +1,39 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{natbib}
+
+\title{A Sample Paper for Testing bibsleuth}
+\author{Test Author}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+Scale-free networks were first described by \cite{barabasi1999emergence}, who showed
+that many real-world networks follow a power-law degree distribution.
+
+The small-world phenomenon was demonstrated in the seminal work of
+\citet{watts1998collective}, showing that most networks exhibit short path lengths
+and high clustering.
+
+% This is a comment that should be ignored \cite{ignoreme}
+
+\section{Background}
+
+Weak ties play a crucial role in social networks \citep{granovetter1973strength},
+bridging otherwise disconnected communities.
+
+Network science has been reviewed extensively \cite{newman2003structure,barabasi1999emergence}.
+
+A recent study claimed surprising results \cite{fake2024nonexistent} but these
+findings have not been replicated.
+
+\section{Methods}
+
+We use the approach described in \autocite{watts1998collective} with modifications.
+
+\bibliography{sample}
+\bibliographystyle{plainnat}
+
+\end{document}

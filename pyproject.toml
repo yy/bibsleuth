@@ -1,0 +1,40 @@
+[project]
+name = "bibsleuth"
+version = "0.1.0"
+description = "Citation verification and analysis for LaTeX papers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+keywords = ["citations", "bibliography", "verification", "latex", "bibtex"]
+
+dependencies = [
+    "httpx>=0.27",
+    "bibtexparser>=2.0.0b7",
+    "pylatexenc>=2.10",
+]
+
+[project.optional-dependencies]
+llm = ["litellm>=1.40"]
+
+[project.scripts]
+bibsleuth = "bibsleuth.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bibsleuth"]
+
+[dependency-groups]
+dev = ["ruff", "pytest", "pytest-cov", "respx", "pre-commit"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=bibsleuth --cov-report=term-missing -q"
