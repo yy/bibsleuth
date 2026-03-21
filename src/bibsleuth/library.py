@@ -22,7 +22,7 @@ def load_library(config_path: str = "~/.bibsleuth/library.bib") -> list[BibEntry
     if not path.exists():
         return []
 
-    library = bibtexparser.parse(path.read_text(encoding="utf-8"))
+    library = bibtexparser.parse_string(path.read_text(encoding="utf-8"))
     entries = []
     for entry in library.entries:
         fields = {k: str(v.value) for k, v in entry.fields_dict.items()}

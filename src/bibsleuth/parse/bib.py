@@ -12,7 +12,7 @@ from ..types import BibEntry
 def parse_bib(path: str | Path) -> list[BibEntry]:
     """Parse a .bib file and return structured entries."""
     path = Path(path)
-    library = bibtexparser.parse(path.read_text(encoding="utf-8"))
+    library = bibtexparser.parse_string(path.read_text(encoding="utf-8"))
     entries = []
     for entry in library.entries:
         fields = dict(entry.fields_dict)
