@@ -5,8 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import bibtexparser
-
+from .parse.bib import parse_bib
 from .types import BibEntry
 
 
@@ -21,15 +20,7 @@ def load_library(config_path: str = "~/.bibsleuth/library.bib") -> list[BibEntry
     path = _library_path(config_path)
     if not path.exists():
         return []
-
-    library = bibtexparser.parse_string(path.read_text(encoding="utf-8"))
-    entries = []
-    for entry in library.entries:
-        fields = {k: str(v.value) for k, v in entry.fields_dict.items()}
-        entries.append(
-            BibEntry(key=entry.key, entry_type=entry.entry_type, fields=fields)
-        )
-    return entries
+    return parse_bib(path)
 
 
 def add_to_library(
