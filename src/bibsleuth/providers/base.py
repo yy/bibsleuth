@@ -42,6 +42,17 @@ class BaseProvider(ABC):
         self.offline = offline
         self._semaphore = asyncio.Semaphore(1)
         self._last_request = 0.0
+        self._client: httpx.AsyncClient | None = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout_seconds)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     @abstractmethod
     async def search(
@@ -62,17 +73,6 @@ class BaseProvider(ABC):
         query = urlencode(sorted((params or {}).items()))
         raw = f"{url}?{query}"
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
-
-    async def _rate_limit(self) -> None:
-        if self.min_delay_seconds <= 0:
-            return
-        async with self._semaphore:
-            loop = asyncio.get_event_loop()
-            now = loop.time()
-            elapsed = now - self._last_request
-            if elapsed < self.min_delay_seconds:
-                await asyncio.sleep(self.min_delay_seconds - elapsed)
-            self._last_request = loop.time()
 
     async def _request_json(
         self,
@@ -98,19 +98,31 @@ class BaseProvider(ABC):
 
         last_error: str | None = None
         for attempt in range(self.max_retries + 1):
-            await self._rate_limit()
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with self._semaphore:
+                # Rate limit: wait if needed
+                if self.min_delay_seconds > 0:
+                    loop = asyncio.get_running_loop()
+                    elapsed = loop.time() - self._last_request
+                    if elapsed < self.min_delay_seconds:
+                        await asyncio.sleep(self.min_delay_seconds - elapsed)
+
+                try:
+                    client = await self._get_client()
                     response = await client.get(
                         url, params=params, headers=request_headers
                     )
-            except httpx.HTTPError as exc:
-                last_error = str(exc)
-                if attempt < self.max_retries:
-                    await asyncio.sleep(self.backoff_seconds * (2**attempt))
-                    continue
-                raise ProviderError(last_error) from exc
+                except httpx.HTTPError as exc:
+                    last_error = str(exc)
+                    if self.min_delay_seconds > 0:
+                        self._last_request = asyncio.get_running_loop().time()
+                    if attempt < self.max_retries:
+                        continue
+                    raise ProviderError(last_error) from exc
 
+                if self.min_delay_seconds > 0:
+                    self._last_request = asyncio.get_running_loop().time()
+
+            # Outside semaphore: handle response
             status_code = response.status_code
 
             if status_code == 429 and attempt < self.max_retries:

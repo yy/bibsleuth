@@ -6,6 +6,16 @@ from ..types import Candidate
 from .base import BaseProvider
 
 
+def _safe_year(pubdate: str | None) -> int | None:
+    if not pubdate or len(pubdate) < 4:
+        return None
+    try:
+        year = int(pubdate[:4])
+        return year if 1000 <= year <= 9999 else None
+    except (ValueError, TypeError):
+        return None
+
+
 class PubMedProvider(BaseProvider):
     provider_name = "pubmed"
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -81,7 +91,7 @@ class PubMedProvider(BaseProvider):
                     provider_id=pmid,
                     title=doc.get("title"),
                     authors=authors,
-                    year=int(doc["pubdate"][:4]) if doc.get("pubdate") else None,
+                    year=_safe_year(doc.get("pubdate")),
                     venue=doc.get("fulljournalname"),
                     ids=ids,
                     url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",

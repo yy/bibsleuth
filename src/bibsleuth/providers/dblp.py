@@ -6,6 +6,15 @@ from ..types import Candidate
 from .base import BaseProvider
 
 
+def _safe_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 class DBLPProvider(BaseProvider):
     provider_name = "dblp"
     base_url = "https://dblp.org/search/publ/api"
@@ -52,7 +61,7 @@ class DBLPProvider(BaseProvider):
             provider_id=info.get("key", ""),
             title=info.get("title"),
             authors=authors,
-            year=int(info["year"]) if info.get("year") else None,
+            year=_safe_int(info.get("year")),
             venue=info.get("venue"),
             ids=ids,
             url=info.get("ee") or info.get("url"),

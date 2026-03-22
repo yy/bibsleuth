@@ -11,8 +11,9 @@ from . import __version__
 from .cache import Cache, NullCache
 from .config import Config
 from .library import add_to_library, search_library
+from .llm.analysis import run_llm_analyses
 from .parse.bib import parse_bib
-from .parse.tex import extract_citations, find_bib_path
+from .parse.tex import extract_citations, extract_claims, find_bib_path
 from .providers import ALL_PROVIDERS
 from .report import to_json, to_markdown, write_reports
 from .types import Verdict
@@ -124,6 +125,8 @@ def _run_check(args: argparse.Namespace) -> int:
         }
         if name == "openalex" and config.openalex_email:
             kwargs["email"] = config.openalex_email
+        elif name == "crossref" and config.openalex_email:
+            kwargs["email"] = config.openalex_email
         elif name == "semantic_scholar" and config.s2_api_key:
             kwargs["api_key"] = config.s2_api_key
         elif name == "pubmed" and config.ncbi_api_key:
@@ -136,8 +139,32 @@ def _run_check(args: argparse.Namespace) -> int:
 
     print(f"Checking against {len(providers)} providers...")
 
-    # Run verification
-    results = asyncio.run(verify_entries(entries, providers, config))
+    # Run verification (and LLM analysis if enabled) in a single event loop
+    async def _run_all():
+        try:
+            results = await verify_entries(entries, providers, config)
+            llm_results = []
+            if input_path.suffix == ".tex" and not args.no_llm:
+                claims = extract_claims(input_path)
+                try:
+                    llm_results = await run_llm_analyses(
+                        contexts,
+                        claims,
+                        results,
+                        providers,
+                        config,
+                        section=args.section,
+                        uncited_only=args.uncited_only,
+                    )
+                except ImportError as exc:
+                    print(f"Error: {exc}", file=sys.stderr)
+            return results, llm_results
+        finally:
+            for p in providers:
+                if hasattr(p, "close"):
+                    await p.close()
+
+    results, llm_results = asyncio.run(_run_all())
 
     # Print summary
     verdicts = {}
@@ -149,19 +176,27 @@ def _run_check(args: argparse.Namespace) -> int:
     for verdict, count in sorted(verdicts.items()):
         print(f"  {verdict}: {count}")
 
+    report_config = {
+        "providers": provider_names,
+        "offline": args.offline,
+        "llm_enabled": bool(input_path.suffix == ".tex" and not args.no_llm),
+        "section": args.section,
+        "uncited_only": args.uncited_only,
+    }
+
     # Write reports
     if args.output:
-        write_reports(results, {}, args.output)
+        write_reports(results, report_config, args.output, llm_results=llm_results)
         print(f"\nReports written to {args.output}.json and {args.output}.md")
     else:
         fmt = args.format
         if fmt in ("json", "both"):
-            print("\n" + to_json(results, {}))
+            print("\n" + to_json(results, report_config, llm_results=llm_results))
         if fmt in ("md", "both"):
-            print("\n" + to_markdown(results, {}))
+            print("\n" + to_markdown(results, report_config, llm_results=llm_results))
 
     # Return non-zero if any unverified
-    if any(r.verdict == Verdict.UNVERIFIED for r in results):
+    if any(r.verdict in {Verdict.UNVERIFIED, Verdict.ERROR} for r in results):
         return 1
     return 0
 

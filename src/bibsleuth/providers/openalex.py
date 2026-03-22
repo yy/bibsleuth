@@ -64,15 +64,17 @@ class OpenAlexProvider(BaseProvider):
         if work.get("ids", {}).get("openalex"):
             ids["openalex"] = work["ids"]["openalex"]
 
+        location = work.get("primary_location") or {}
+        source = location.get("source") or {}
+        venue = source.get("display_name") if isinstance(source, dict) else None
+
         return Candidate(
             provider=self.provider_name,
             provider_id=work.get("id", ""),
             title=work.get("title"),
             authors=authors,
             year=work.get("publication_year"),
-            venue=work.get("primary_location", {}).get("source", {}).get("display_name")
-            if work.get("primary_location")
-            else None,
+            venue=venue,
             abstract=work.get("abstract"),
             ids=ids,
             url=work.get("doi") or work.get("id"),

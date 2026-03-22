@@ -35,6 +35,7 @@ class ArxivProvider(BaseProvider):
         if resp["status_code"] != 200:
             return []
 
+        # arXiv returns XML; base class stores it as {"raw": ...}
         return self._parse_atom(resp["data"].get("raw", ""))
 
     async def lookup_by_id(self, identifier: str, id_type: str) -> list[Candidate]:
@@ -47,32 +48,6 @@ class ArxivProvider(BaseProvider):
             return []
 
         return self._parse_atom(resp["data"].get("raw", ""))
-
-    async def _request_json(self, url, params=None, headers=None):
-        """Override to handle XML response from arXiv."""
-        import httpx
-
-        request_key = self._make_request_key(url, params)
-        cached = self.cache.get(self.provider_name, request_key)
-        if cached:
-            return {
-                "_cache": True,
-                "status_code": cached.status_code,
-                "data": cached.response_json,
-            }
-
-        if self.offline:
-            from .base import ProviderError
-
-            raise ProviderError(f"{self.provider_name}: offline mode, no cache entry")
-
-        await self._rate_limit()
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(url, params=params)
-
-        data = {"raw": response.text}
-        self.cache.set(self.provider_name, request_key, data, response.status_code)
-        return {"_cache": False, "status_code": response.status_code, "data": data}
 
     def _parse_atom(self, xml_text: str) -> list[Candidate]:
         if not xml_text:
@@ -100,7 +75,10 @@ class ArxivProvider(BaseProvider):
             published = entry.find(f"{ATOM_NS}published")
             year = None
             if published is not None and published.text:
-                year = int(published.text[:4])
+                try:
+                    year = int(published.text[:4])
+                except (ValueError, IndexError):
+                    pass
 
             abstract_el = entry.find(f"{ATOM_NS}summary")
             abstract = (
@@ -122,7 +100,6 @@ class ArxivProvider(BaseProvider):
             if arxiv_id:
                 ids["arxiv"] = arxiv_id
 
-            # Check for DOI
             doi_el = entry.find(f"{ARXIV_NS}doi")
             if doi_el is not None and doi_el.text:
                 ids["doi"] = doi_el.text.strip()

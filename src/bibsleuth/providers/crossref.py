@@ -11,6 +11,15 @@ class CrossRefProvider(BaseProvider):
     base_url = "https://api.crossref.org"
     min_delay_seconds = 0.1  # polite pool with mailto
 
+    def __init__(self, email: str | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.email = email
+
+    def _mailto(self) -> dict[str, str]:
+        if self.email:
+            return {"mailto": self.email}
+        return {}
+
     async def search(
         self,
         title: str,
@@ -20,7 +29,7 @@ class CrossRefProvider(BaseProvider):
         params: dict = {
             "query.bibliographic": title,
             "rows": 5,
-            "mailto": self.user_agent,
+            **self._mailto(),
         }
         if authors:
             params["query.author"] = authors[0]
@@ -38,7 +47,7 @@ class CrossRefProvider(BaseProvider):
 
         resp = await self._request_json(
             f"{self.base_url}/works/{identifier}",
-            params={"mailto": self.user_agent},
+            params=self._mailto(),
         )
         if resp["status_code"] != 200:
             return []
@@ -63,16 +72,16 @@ class CrossRefProvider(BaseProvider):
             "published-online", {}
         ).get("date-parts")
         if date_parts and date_parts[0]:
-            year = date_parts[0][0]
+            try:
+                year = int(date_parts[0][0])
+            except (ValueError, TypeError):
+                pass
 
         venue = (
             item.get("container-title", [None])[0]
             if item.get("container-title")
             else None
         )
-
-        # Check retraction status
-        is_retracted = bool(item.get("update-to")) or bool(item.get("is-retracted-by"))
 
         return Candidate(
             provider=self.provider_name,
