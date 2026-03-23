@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..config import Config
 from ..types import LLMAnalysis
 from .client import complete
+from .parsing import parse_json_object
 
 PROMPT_TEMPLATE = """\
 You are an academic literature expert. Given a claim from a paper, suggest papers \
@@ -18,7 +19,8 @@ that should be cited to support this claim. Focus on well-known, highly-cited pa
 
 ## Instructions
 Respond with a JSON object:
-- "suggestions": list of objects, each with "title", "authors" (list), "year", and "reason"
+- "suggestions": list of objects, each with "title", "authors" (list),
+  "year", and "reason"
 - Suggest 3-5 papers maximum
 - Only suggest papers you are confident actually exist
 """
@@ -33,20 +35,15 @@ async def suggest_citations(
     prompt = PROMPT_TEMPLATE.format(claim=claim, context=context)
     response = await complete(prompt, config)
 
-    import json
-    import re
-
     suggested = []
-    json_match = re.search(r"\{[^}]+\}", response, re.DOTALL)
-    if json_match:
-        try:
-            data = json.loads(json_match.group())
-            suggested = data.get("suggestions", [])
-        except json.JSONDecodeError:
-            pass
+    data = parse_json_object(response)
+    if data:
+        suggested = data.get("suggestions", [])
 
     return LLMAnalysis(
         key="",
+        claim=claim,
+        section=context,
         explanation=response,
         suggested_papers=suggested,
     )

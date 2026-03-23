@@ -7,21 +7,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .types import Report, Verdict, VerifyResult
+from .types import LLMAnalysis, Report, Verdict, VerifyResult
 
 
-def _make_report(results: list[VerifyResult], config: dict) -> Report:
+def _make_report(
+    results: list[VerifyResult],
+    config: dict,
+    llm_results: list[LLMAnalysis] | None = None,
+) -> Report:
     return Report(
         version=__version__,
         timestamp=datetime.now(timezone.utc).isoformat(),
         config=config,
         verify_results=results,
+        llm_results=llm_results or [],
     )
 
 
-def to_json(results: list[VerifyResult], config: dict) -> str:
+def to_json(
+    results: list[VerifyResult],
+    config: dict,
+    llm_results: list[LLMAnalysis] | None = None,
+) -> str:
     """Generate a JSON report."""
-    report = _make_report(results, config)
+    report = _make_report(results, config, llm_results)
 
     summary = {}
     for v in Verdict:
@@ -55,11 +64,27 @@ def to_json(results: list[VerifyResult], config: dict) -> str:
             }
             for r in results
         ],
+        "llm_results": [
+            {
+                "key": analysis.key,
+                "claim": analysis.claim,
+                "section": analysis.section,
+                "supported": analysis.supported,
+                "explanation": analysis.explanation,
+                "suggested_papers": analysis.suggested_papers,
+                "contradictions": analysis.contradictions,
+            }
+            for analysis in report.llm_results
+        ],
     }
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
-def to_markdown(results: list[VerifyResult], config: dict) -> str:
+def to_markdown(
+    results: list[VerifyResult],
+    config: dict,
+    llm_results: list[LLMAnalysis] | None = None,
+) -> str:
     """Generate a Markdown report."""
     lines = ["# bibsleuth Report\n"]
 
@@ -105,6 +130,35 @@ def to_markdown(results: list[VerifyResult], config: dict) -> str:
                 lines.append(f"  - `{k}`: {v}")
         lines.append("")
 
+    if llm_results:
+        lines.append("## LLM Analysis\n")
+        for analysis in llm_results:
+            if analysis.key:
+                lines.append(f"### Citation `{analysis.key}`\n")
+            else:
+                lines.append("### Claim Analysis\n")
+
+            if analysis.section:
+                lines.append(f"- **Section**: {analysis.section}")
+            if analysis.claim:
+                lines.append(f"- **Claim**: {analysis.claim}")
+            if analysis.supported is not None:
+                status = (
+                    "supports"
+                    if analysis.supported
+                    else "does not support"
+                )
+                lines.append(f"- **Support**: {status}")
+            if analysis.explanation:
+                lines.append(f"- **Explanation**: {analysis.explanation}")
+            for paper in analysis.suggested_papers:
+                title = paper.get("title", "Untitled")
+                lines.append(f"- **Suggested paper**: {title}")
+            for paper in analysis.contradictions:
+                title = paper.get("title", "Untitled")
+                lines.append(f"- **Contradicting paper**: {title}")
+            lines.append("")
+
     return "\n".join(lines)
 
 
@@ -112,11 +166,18 @@ def write_reports(
     results: list[VerifyResult],
     config: dict,
     output_path: str | Path,
+    llm_results: list[LLMAnalysis] | None = None,
 ) -> None:
     """Write both JSON and Markdown reports."""
     output_path = Path(output_path)
     json_path = output_path.with_suffix(".json")
     md_path = output_path.with_suffix(".md")
 
-    json_path.write_text(to_json(results, config), encoding="utf-8")
-    md_path.write_text(to_markdown(results, config), encoding="utf-8")
+    json_path.write_text(
+        to_json(results, config, llm_results=llm_results),
+        encoding="utf-8",
+    )
+    md_path.write_text(
+        to_markdown(results, config, llm_results=llm_results),
+        encoding="utf-8",
+    )

@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +35,7 @@ class Cache:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cache (
@@ -47,10 +48,11 @@ class Cache:
                 )
                 """
             )
+            conn.commit()
 
     def get(self, provider: str, request_key: str) -> CacheEntry | None:
         now = int(time.time())
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn:
             row = conn.execute(
                 "SELECT response_json, status_code, created_at FROM cache "
                 "WHERE provider=? AND request_key=?",
@@ -72,13 +74,14 @@ class Cache:
         status_code: int,
     ) -> None:
         payload = json.dumps(response_json)
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO cache "
                 "(provider, request_key, response_json, status_code, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (provider, request_key, payload, int(status_code), int(time.time())),
             )
+            conn.commit()
 
 
 class NullCache:

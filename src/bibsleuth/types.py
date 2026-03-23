@@ -60,6 +60,15 @@ class CitingContext:
 
 
 @dataclass
+class ClaimContext:
+    """A sentence-level claim extracted from a .tex file."""
+
+    sentence: str
+    section: str = ""
+    cited_keys: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Candidate:
     """A candidate match from an academic database."""
 
@@ -91,6 +100,8 @@ class LLMAnalysis:
     """LLM-based analysis result for a citation."""
 
     key: str
+    claim: str = ""
+    section: str = ""
     supported: bool | None = None
     explanation: str = ""
     suggested_papers: list[dict[str, Any]] = field(default_factory=list)

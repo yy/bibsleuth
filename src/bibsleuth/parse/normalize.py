@@ -1,7 +1,8 @@
 """Text normalization for titles, authors, and venues.
 
 Core logic adapted from CiteSleuth (MIT license, https://github.com/uncrafted/CiteSleuth).
-Enhanced with accent stripping and LaTeX accent expansion patterns inspired by hallucinator.
+Enhanced with accent stripping and LaTeX accent expansion patterns inspired by
+hallucinator.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ NON_WORD = re.compile(r"[^a-z0-9\s]")
 # LaTeX accent commands -> base character
 LATEX_ACCENTS = re.compile(
     r"""\\[`'^"~=.uvHtcdb]\{([a-zA-Z])\}"""  # e.g. \"{o} -> o
-    r"""|\\[`'^"~=.uvHtcdb]([a-zA-Z])(?![a-zA-Z])"""  # e.g. \"o -> o (not followed by letter)
+    r"""|\\[`'^"~=.uvHtcdb]([a-zA-Z])(?![a-zA-Z])"""  # e.g. \"o -> o
 )
 
 # Common Greek letters in LaTeX

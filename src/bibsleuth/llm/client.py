@@ -10,7 +10,8 @@ def _check_litellm():
         import litellm  # noqa: F401
     except ImportError:
         raise ImportError(
-            "LLM features require litellm. Install with: uv pip install 'bibsleuth[llm]' or uv sync --extra llm"
+            "LLM features require litellm. Install with: "
+            "uv pip install 'bibsleuth[llm]' or uv sync --extra llm"
         )
 
 

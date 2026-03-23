@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 
 from ..config import Config
 from ..parse.extract_ids import extract_ids
@@ -11,12 +12,20 @@ from ..types import BibEntry, Candidate, Verdict, VerifyResult
 from .scoring import score_candidate
 
 
+@dataclass
+class ProviderCheckResult:
+    provider: str
+    candidates: list[Candidate] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    had_successful_query: bool = False
+
+
 async def _check_entry_against_provider(
     entry: BibEntry,
     provider: BaseProvider,
-) -> list[Candidate]:
+) -> ProviderCheckResult:
     """Query a single provider for a single entry."""
-    candidates: list[Candidate] = []
+    result = ProviderCheckResult(provider=provider.provider_name)
 
     # Try ID-based lookup first
     ids = extract_ids(entry.raw or "")
@@ -25,25 +34,27 @@ async def _check_entry_against_provider(
 
     for id_type, identifier in ids.items():
         try:
-            results = await provider.lookup_by_id(identifier, id_type)
-            candidates.extend(results)
-        except ProviderError:
-            pass
+            candidates = await provider.lookup_by_id(identifier, id_type)
+            result.had_successful_query = True
+            result.candidates.extend(candidates)
+        except ProviderError as exc:
+            result.errors.append(f"{provider.provider_name}: {exc}")
 
     # Fall back to title search
-    if not candidates and entry.title:
+    if not result.candidates and entry.title:
         try:
             year = int(entry.year) if entry.year else None
-            results = await provider.search(
+            candidates = await provider.search(
                 title=entry.title,
                 authors=entry.authors[:1] if entry.authors else None,
                 year=year,
             )
-            candidates.extend(results)
-        except ProviderError:
-            pass
+            result.had_successful_query = True
+            result.candidates.extend(candidates)
+        except ProviderError as exc:
+            result.errors.append(f"{provider.provider_name}: {exc}")
 
-    return candidates
+    return result
 
 
 async def verify_entry(
@@ -55,16 +66,44 @@ async def verify_entry(
     tasks = [_check_entry_against_provider(entry, provider) for provider in providers]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    checks: list[ProviderCheckResult] = []
+    for provider, result in zip(providers, results, strict=False):
+        if isinstance(result, ProviderCheckResult):
+            checks.append(result)
+            continue
+        if isinstance(result, Exception):
+            checks.append(
+                ProviderCheckResult(
+                    provider=provider.provider_name,
+                    errors=[f"{provider.provider_name}: {result}"],
+                )
+            )
+
     all_candidates: list[Candidate] = []
-    for result in results:
-        if isinstance(result, list):
-            all_candidates.extend(result)
+    errors: list[str] = []
+    successful_queries = 0
+    for check in checks:
+        all_candidates.extend(check.candidates)
+        errors.extend(check.errors)
+        if check.had_successful_query:
+            successful_queries += 1
+
+    all_candidates = _dedupe_candidates(all_candidates)
 
     if not all_candidates:
+        if successful_queries == 0 and errors:
+            return VerifyResult(
+                key=entry.key,
+                verdict=Verdict.ERROR,
+                reasons=errors[:3],
+            )
+
+        reasons = ["Not found in any database"]
+        reasons.extend(errors[:2])
         return VerifyResult(
             key=entry.key,
             verdict=Verdict.UNVERIFIED,
-            reasons=["Not found in any database"],
+            reasons=reasons,
         )
 
     # Score candidates
@@ -75,22 +114,9 @@ async def verify_entry(
         "venue": entry.venue,
     }
 
-    best_score = 0.0
-    best_candidate = None
-    scored_candidates: list[Candidate] = []
-
-    for candidate in all_candidates:
-        cand_fields = {
-            "title": candidate.title or "",
-            "authors": candidate.authors,
-            "year": candidate.year,
-            "venue": candidate.venue or "",
-        }
-        score, _ = score_candidate(ref_fields, cand_fields)
-        scored_candidates.append(candidate)
-        if score > best_score:
-            best_score = score
-            best_candidate = candidate
+    ranked_candidates = _rank_candidates(ref_fields, all_candidates)
+    best_score, best_candidate = ranked_candidates[0]
+    scored_candidates = [candidate for _, candidate in ranked_candidates]
 
     # Determine verdict
     if best_score >= config.verified_threshold:
@@ -129,3 +155,42 @@ async def verify_entries(
     """Verify all entries concurrently."""
     tasks = [verify_entry(entry, providers, config) for entry in entries]
     return await asyncio.gather(*tasks)
+
+
+def _rank_candidates(
+    ref_fields: dict[str, object],
+    candidates: list[Candidate],
+) -> list[tuple[float, Candidate]]:
+    ranked: list[tuple[float, Candidate]] = []
+    for candidate in candidates:
+        cand_fields = {
+            "title": candidate.title or "",
+            "authors": candidate.authors,
+            "year": candidate.year,
+            "venue": candidate.venue or "",
+        }
+        score, _ = score_candidate(ref_fields, cand_fields)
+        ranked.append((score, candidate))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
+def _dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    unique: list[Candidate] = []
+    seen: set[tuple[str, str]] = set()
+
+    for candidate in candidates:
+        identity = (
+            candidate.provider,
+            candidate.provider_id
+            or candidate.ids.get("doi")
+            or candidate.url
+            or candidate.title
+            or "",
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(candidate)
+
+    return unique
