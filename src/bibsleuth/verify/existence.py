@@ -248,7 +248,7 @@ def _build_result(
     if best_candidate and verdict in (Verdict.VERIFIED, Verdict.LIKELY):
         if best_candidate.ids.get("doi") and not entry.doi:
             patch["doi"] = best_candidate.ids["doi"]
-        if best_candidate.url:
+        elif best_candidate.url and not entry.doi:
             patch["url"] = best_candidate.url
 
     return VerifyResult(
