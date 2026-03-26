@@ -9,6 +9,7 @@ from .base import BaseProvider
 class CrossRefProvider(BaseProvider):
     provider_name = "crossref"
     base_url = "https://api.crossref.org"
+    supported_categories = frozenset({"academic", "book"})
     min_delay_seconds = 0.1  # polite pool with mailto
 
     def __init__(self, email: str | None = None, **kwargs):

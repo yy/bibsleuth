@@ -47,6 +47,8 @@ def to_json(
             {
                 "key": r.key,
                 "verdict": r.verdict.value,
+                "entry_type": r.entry_type,
+                "category": r.category,
                 "score": round(r.score, 3),
                 "reasons": r.reasons,
                 "candidates": [
@@ -80,12 +82,49 @@ def to_json(
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
+_VERDICT_ORDER = [
+    Verdict.RETRACTED,
+    Verdict.ERROR,
+    Verdict.UNVERIFIED,
+    Verdict.CONFLICT,
+    Verdict.LIKELY,
+    Verdict.VERIFIED,
+]
+
+_CATEGORY_LABELS = {
+    "academic": "Academic Papers",
+    "book": "Books",
+    "non_searchable": "Software/Data/Other",
+    "": "Other",
+}
+
+
+def _format_entry_md(r: VerifyResult) -> list[str]:
+    """Format a single entry as markdown lines."""
+    lines = []
+    lines.append(f"- **`{r.key}`**")
+    if r.entry_type:
+        lines.append(f"  - Type: {r.entry_type}")
+    if r.score > 0:
+        lines.append(f"  - Score: {r.score:.2f}")
+    for reason in r.reasons:
+        lines.append(f"  - {reason}")
+    if r.candidates:
+        best = r.candidates[0]
+        if best.url:
+            lines.append(f"  - Link: [{best.url}]({best.url})")
+    if r.patch:
+        for k, v in r.patch.items():
+            lines.append(f"  - Suggested `{k}`: {v}")
+    return lines
+
+
 def to_markdown(
     results: list[VerifyResult],
     config: dict,
     llm_results: list[LLMAnalysis] | None = None,
 ) -> str:
-    """Generate a Markdown report."""
+    """Generate a Markdown report grouped by verdict and entry category."""
     lines = ["# bibsleuth Report\n"]
 
     # Summary table
@@ -101,33 +140,43 @@ def to_markdown(
         lines.append(f"| {verdict} | {count} |")
     lines.append("")
 
-    # Entries
-    lines.append("## Entries\n")
+    # Group by verdict, then by category
+    by_verdict: dict[Verdict, list[VerifyResult]] = {}
     for r in results:
-        icon = {
-            Verdict.VERIFIED: "OK",
-            Verdict.LIKELY: "~",
-            Verdict.UNVERIFIED: "?",
-            Verdict.CONFLICT: "!",
-            Verdict.RETRACTED: "!!",
-            Verdict.ERROR: "ERR",
-        }.get(r.verdict, "?")
+        by_verdict.setdefault(r.verdict, []).append(r)
 
-        lines.append(f"### [{icon}] `{r.key}`\n")
-        lines.append(f"- **Verdict**: {r.verdict.value}")
-        lines.append(f"- **Score**: {r.score:.2f}")
-        for reason in r.reasons:
-            lines.append(f"- {reason}")
+    for verdict in _VERDICT_ORDER:
+        group = by_verdict.get(verdict)
+        if not group:
+            continue
 
-        if r.candidates:
-            best = r.candidates[0]
-            if best.url:
-                lines.append(f"- **Link**: [{best.url}]({best.url})")
+        lines.append(f"## {verdict.value.title()} ({len(group)})\n")
 
-        if r.patch:
-            lines.append("- **Suggested patch**:")
+        # Sub-group by category
+        by_category: dict[str, list[VerifyResult]] = {}
+        for r in group:
+            by_category.setdefault(r.category, []).append(r)
+
+        categories = sorted(by_category.keys())
+        use_subheadings = len(categories) > 1
+
+        for cat in categories:
+            cat_entries = by_category[cat]
+            if use_subheadings:
+                label = _CATEGORY_LABELS.get(cat, cat or "Other")
+                lines.append(f"### {label} ({len(cat_entries)})\n")
+
+            for r in cat_entries:
+                lines.extend(_format_entry_md(r))
+            lines.append("")
+
+    # Suggested patches summary
+    patches = [r for r in results if r.patch]
+    if patches:
+        lines.append(f"## Suggested Patches ({len(patches)})\n")
+        for r in patches:
             for k, v in r.patch.items():
-                lines.append(f"  - `{k}`: {v}")
+                lines.append(f"- `{r.key}`: add `{k}` = {v}")
         lines.append("")
 
     if llm_results:
@@ -143,11 +192,7 @@ def to_markdown(
             if analysis.claim:
                 lines.append(f"- **Claim**: {analysis.claim}")
             if analysis.supported is not None:
-                status = (
-                    "supports"
-                    if analysis.supported
-                    else "does not support"
-                )
+                status = "supports" if analysis.supported else "does not support"
                 lines.append(f"- **Support**: {status}")
             if analysis.explanation:
                 lines.append(f"- **Explanation**: {analysis.explanation}")

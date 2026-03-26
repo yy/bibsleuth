@@ -15,6 +15,7 @@ ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 class ArxivProvider(BaseProvider):
     provider_name = "arxiv"
     base_url = "https://export.arxiv.org/api/query"
+    supported_categories = frozenset({"academic"})
     min_delay_seconds = 3.0  # arXiv asks for 3s between requests
 
     async def search(

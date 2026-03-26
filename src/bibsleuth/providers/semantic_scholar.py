@@ -9,6 +9,7 @@ from .base import BaseProvider
 class SemanticScholarProvider(BaseProvider):
     provider_name = "semantic_scholar"
     base_url = "https://api.semanticscholar.org/graph/v1"
+    supported_categories = frozenset({"academic"})
     min_delay_seconds = 1.0  # 1 req/s without API key
 
     FIELDS = "title,authors,year,venue,abstract,externalIds,url"

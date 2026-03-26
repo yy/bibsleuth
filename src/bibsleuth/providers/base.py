@@ -26,6 +26,9 @@ class ProviderError(RuntimeError):
 class BaseProvider(ABC):
     provider_name: str = "base"
     base_url: str = ""
+    supported_categories: frozenset[str] = frozenset(
+        {"academic", "book", "non_searchable"}
+    )
     min_delay_seconds: float = 0.0
     timeout_seconds: float = 10.0
     max_retries: int = 2

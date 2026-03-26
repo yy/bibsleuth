@@ -7,6 +7,40 @@ from enum import Enum
 from typing import Any
 
 
+class EntryCategory(Enum):
+    ACADEMIC = "academic"
+    BOOK = "book"
+    NON_SEARCHABLE = "non_searchable"
+
+
+_ENTRY_TYPE_MAP: dict[str, EntryCategory] = {
+    "article": EntryCategory.ACADEMIC,
+    "inproceedings": EntryCategory.ACADEMIC,
+    "conference": EntryCategory.ACADEMIC,
+    "proceedings": EntryCategory.ACADEMIC,
+    "incollection": EntryCategory.ACADEMIC,
+    "phdthesis": EntryCategory.ACADEMIC,
+    "mastersthesis": EntryCategory.ACADEMIC,
+    "techreport": EntryCategory.ACADEMIC,
+    "unpublished": EntryCategory.ACADEMIC,
+    "book": EntryCategory.BOOK,
+    "inbook": EntryCategory.BOOK,
+    "booklet": EntryCategory.BOOK,
+    "misc": EntryCategory.NON_SEARCHABLE,
+    "software": EntryCategory.NON_SEARCHABLE,
+    "dataset": EntryCategory.NON_SEARCHABLE,
+    "online": EntryCategory.NON_SEARCHABLE,
+    "webpage": EntryCategory.NON_SEARCHABLE,
+    "manual": EntryCategory.NON_SEARCHABLE,
+    "electronic": EntryCategory.NON_SEARCHABLE,
+}
+
+
+def classify_entry_type(entry_type: str) -> EntryCategory:
+    """Classify a BibTeX entry type into a search category."""
+    return _ENTRY_TYPE_MAP.get(entry_type.lower(), EntryCategory.ACADEMIC)
+
+
 class Verdict(Enum):
     VERIFIED = "verified"
     LIKELY = "likely"
@@ -89,6 +123,8 @@ class VerifyResult:
 
     key: str
     verdict: Verdict
+    entry_type: str = ""
+    category: str = ""
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)

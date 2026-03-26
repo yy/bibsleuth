@@ -9,6 +9,7 @@ from .base import BaseProvider
 class OpenAlexProvider(BaseProvider):
     provider_name = "openalex"
     base_url = "https://api.openalex.org"
+    supported_categories = frozenset({"academic", "book"})
     min_delay_seconds = 0.1  # polite pool: 10 req/s with email
 
     def __init__(self, email: str | None = None, **kwargs):

@@ -185,14 +185,18 @@ def _run_check(args: argparse.Namespace) -> int:
     }
 
     # Write reports
-    if args.output:
-        write_reports(results, report_config, args.output, llm_results=llm_results)
-        print(f"\nReports written to {args.output}.json and {args.output}.md")
+    output_path = args.output
+    if not output_path and args.format == "both":
+        output_path = str(input_path.parent / "bibsleuth-report")
+
+    if output_path:
+        write_reports(results, report_config, output_path, llm_results=llm_results)
+        print(f"\nReports written to {output_path}.json and {output_path}.md")
     else:
         fmt = args.format
-        if fmt in ("json", "both"):
+        if fmt == "json":
             print("\n" + to_json(results, report_config, llm_results=llm_results))
-        if fmt in ("md", "both"):
+        elif fmt == "md":
             print("\n" + to_markdown(results, report_config, llm_results=llm_results))
 
     # Return non-zero if any unverified

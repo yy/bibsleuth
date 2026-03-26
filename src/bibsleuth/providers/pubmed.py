@@ -19,6 +19,7 @@ def _safe_year(pubdate: str | None) -> int | None:
 class PubMedProvider(BaseProvider):
     provider_name = "pubmed"
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    supported_categories = frozenset({"academic"})
     min_delay_seconds = 0.35  # ~3 req/s without API key
 
     def __init__(self, api_key: str | None = None, **kwargs):

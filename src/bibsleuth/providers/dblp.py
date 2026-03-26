@@ -18,6 +18,7 @@ def _safe_int(value) -> int | None:
 class DBLPProvider(BaseProvider):
     provider_name = "dblp"
     base_url = "https://dblp.org/search/publ/api"
+    supported_categories = frozenset({"academic"})
     min_delay_seconds = 0.7
 
     async def search(
