@@ -1,6 +1,6 @@
 [project]
 name = "bibsleuth"
-version = "0.1.3"
+version = "0.2.0"
 description = "Citation verification and analysis for LaTeX papers"
 readme = "README.md"
 requires-python = ">=3.12"
