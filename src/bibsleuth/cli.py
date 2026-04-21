@@ -38,6 +38,11 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--output", "-o", help="Output path (writes .json and .md)")
     check.add_argument("--format", choices=["json", "md", "both"], default="both")
     check.add_argument("--no-llm", action="store_true", help="Skip LLM-based analysis")
+    check.add_argument(
+        "--llm-model",
+        help="LLM model passed to litellm (overrides $BIBSLEUTH_LLM_MODEL). "
+        "Examples: claude-sonnet-4-20250514, openai/gpt-4o-mini",
+    )
     check.add_argument("--no-cache", action="store_true", help="Disable caching")
     check.add_argument("--offline", action="store_true", help="Use cache only")
     check.add_argument(
@@ -62,6 +67,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _run_check(args: argparse.Namespace) -> int:
     config = Config()
+    if getattr(args, "llm_model", None):
+        config.llm_model = args.llm_model
     input_path = Path(args.input)
 
     if not input_path.exists():

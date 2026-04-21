@@ -89,6 +89,7 @@ def test_run_check_executes_llm_analysis(monkeypatch, tmp_path):
         config,
         section=None,
         uncited_only=False,
+        llm_model=None,
     ):
         llm_calls["section"] = section
         llm_calls["uncited_only"] = uncited_only
@@ -130,6 +131,7 @@ def test_run_check_executes_llm_analysis(monkeypatch, tmp_path):
         providers=None,
         section="Methods",
         uncited_only=True,
+        llm_model=None,
     )
 
     exit_code = cli._run_check(args)
@@ -179,6 +181,7 @@ def test_run_check_skips_llm_when_disabled(monkeypatch, tmp_path):
         providers=None,
         section=None,
         uncited_only=False,
+        llm_model=None,
     )
 
     exit_code = cli._run_check(args)

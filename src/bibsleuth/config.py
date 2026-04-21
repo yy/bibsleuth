@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
+
 
 @dataclass
 class Config:
@@ -13,7 +15,9 @@ class Config:
     positive_ttl_days: int = 7
     negative_ttl_days: int = 1
     user_agent: str = "bibsleuth/0.1 (https://github.com/yy/bibsleuth)"
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = field(
+        default_factory=lambda: os.environ.get("BIBSLEUTH_LLM_MODEL", DEFAULT_LLM_MODEL)
+    )
     max_concurrent_providers: int = 6
     verified_threshold: float = 0.85
     likely_threshold: float = 0.70

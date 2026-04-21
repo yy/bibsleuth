@@ -55,9 +55,18 @@ This writes `report.json` (machine-readable) and `report.md` (human-readable). O
 **Step 3. Run the full analysis (requires LLM).**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...   # or OPENAI_API_KEY
+export ANTHROPIC_API_KEY=sk-...
 bibsleuth check paper.tex -o report
 ```
+
+The default model is `claude-sonnet-4-20250514`. To use a different provider (e.g. OpenAI), set `BIBSLEUTH_LLM_MODEL` or pass `--llm-model`:
+
+```bash
+export OPENAI_API_KEY=sk-...
+bibsleuth check paper.tex --llm-model openai/gpt-4o-mini -o report
+```
+
+The model string is passed to [litellm](https://docs.litellm.ai/), which routes to the matching provider and API key.
 
 This adds three LLM-powered checks on top of existence verification:
 - **Mis-citation detection**: for each `\cite{}`, does the cited paper's abstract actually support the claim you're making? Flags cases where a citation doesn't match the surrounding text.
