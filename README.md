@@ -20,10 +20,17 @@ uvx bibsleuth check paper.tex
 ```bash
 bibsleuth check paper.tex                    # auto-discovers .bib
 bibsleuth check paper.tex --bib refs.bib     # explicit .bib
+bibsleuth check paper.tex --bib refs.bib,supplement.bib
 bibsleuth check refs.bib                     # bib-only mode
 bibsleuth check paper.tex --no-llm           # existence checking only
 bibsleuth check paper.tex -o report          # write report.json + report.md
+bibsleuth check paper.tex -o report --format json
 ```
+
+TeX project discovery follows `\input{}` and `\include{}` recursively and loads
+all referenced `\bibliography{}` and `\addbibresource{}` files. Include cycles,
+missing files, conflicting bibliography keys, and cited keys missing from the
+bibliography are reported as errors.
 
 ### System library
 
@@ -65,6 +72,12 @@ The default model is `claude-sonnet-4-20250514`. To use a different provider (e.
 export OPENAI_API_KEY=sk-...
 bibsleuth check paper.tex --llm-model openai/gpt-4o-mini -o report
 ```
+
+Use `--llm-concurrency` to bound simultaneous model calls,
+`--max-llm-citations` to cap citation-support checks, and `--max-llm-claims` to
+cap suggestion and contradiction analysis. Individual LLM failures are recorded
+in the report without discarding completed citation verification or other
+successful analyses.
 
 The model string is passed to [litellm](https://docs.litellm.ai/), which routes to the matching provider and API key.
 

@@ -7,6 +7,38 @@ from enum import Enum
 from typing import Any
 
 
+def _split_bibtex_authors(raw: str) -> list[str]:
+    """Split a BibTeX author list on unbraced `and` separators."""
+    authors: list[str] = []
+    depth = 0
+    start = 0
+    index = 0
+
+    while index < len(raw):
+        char = raw[index]
+        if char == "{":
+            depth += 1
+        elif char == "}" and depth > 0:
+            depth -= 1
+        elif (
+            depth == 0
+            and raw[index : index + 3].lower() == "and"
+            and (index == 0 or raw[index - 1].isspace())
+            and (index + 3 == len(raw) or raw[index + 3].isspace())
+        ):
+            author = raw[start:index].strip()
+            if author:
+                authors.append(author)
+            start = index + 3
+            index += 2
+        index += 1
+
+    final_author = raw[start:].strip()
+    if final_author:
+        authors.append(final_author)
+    return authors
+
+
 class EntryCategory(Enum):
     ACADEMIC = "academic"
     BOOK = "book"
@@ -68,7 +100,7 @@ class BibEntry:
         raw = self.fields.get("author", "")
         if not raw:
             return []
-        return [a.strip() for a in raw.split(" and ")]
+        return _split_bibtex_authors(raw)
 
     @property
     def year(self) -> str | None:
@@ -136,6 +168,9 @@ class LLMAnalysis:
     """LLM-based analysis result for a citation."""
 
     key: str
+    analysis_type: str = ""
+    status: str = "completed"
+    error: str = ""
     claim: str = ""
     section: str = ""
     supported: bool | None = None

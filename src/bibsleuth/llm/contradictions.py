@@ -42,6 +42,9 @@ async def find_contradictions(
 
     return LLMAnalysis(
         key="",
+        analysis_type="contradictions",
+        status="completed" if data else "failed",
+        error="" if data else "Model response did not contain valid JSON",
         claim=claim,
         section=context,
         explanation=response,

@@ -2,6 +2,7 @@
 
 from bibsleuth.parse.bib import parse_bib
 from bibsleuth.parse.extract_ids import extract_ids
+from bibsleuth.types import BibEntry
 
 
 def test_parse_bib_preserves_raw_entry_text(tmp_path):
@@ -20,3 +21,16 @@ def test_parse_bib_preserves_raw_entry_text(tmp_path):
 
     assert "arXiv:1234.5678" in entry.raw
     assert extract_ids(entry.raw)["arxiv"] == "1234.5678"
+
+
+def test_author_list_preserves_braced_corporate_names():
+    entry = BibEntry(
+        key="demo",
+        entry_type="article",
+        fields={"author": "{Research and Development Corporation} and Smith, Jane"},
+    )
+
+    assert entry.authors == [
+        "{Research and Development Corporation}",
+        "Smith, Jane",
+    ]

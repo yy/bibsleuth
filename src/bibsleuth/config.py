@@ -19,6 +19,9 @@ class Config:
         default_factory=lambda: os.environ.get("BIBSLEUTH_LLM_MODEL", DEFAULT_LLM_MODEL)
     )
     max_concurrent_providers: int = 6
+    max_concurrent_llm: int = 4
+    max_llm_citations: int = 100
+    max_llm_claims: int = 50
     verified_threshold: float = 0.85
     likely_threshold: float = 0.70
     timeout_seconds: float = 10.0

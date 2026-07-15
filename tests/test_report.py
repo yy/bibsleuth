@@ -1,7 +1,10 @@
 """Tests for report generation."""
 
-from bibsleuth.report import to_markdown
-from bibsleuth.types import Candidate, Verdict, VerifyResult
+from importlib.metadata import version
+
+from bibsleuth import __version__
+from bibsleuth.report import to_markdown, write_reports
+from bibsleuth.types import Candidate, LLMAnalysis, Verdict, VerifyResult
 
 
 def test_markdown_uses_best_candidate_link():
@@ -82,3 +85,31 @@ def test_markdown_patches_section():
     md = to_markdown(results, {})
     assert "## Suggested Patches (1)" in md
     assert "`x`" in md
+
+
+def test_package_version_comes_from_metadata():
+    assert __version__ == version("bibsleuth")
+
+
+def test_write_reports_honors_json_format(tmp_path):
+    output = tmp_path / "report"
+
+    written = write_reports([], {}, output, output_format="json")
+
+    assert written == [output.with_suffix(".json")]
+    assert output.with_suffix(".json").exists()
+    assert not output.with_suffix(".md").exists()
+
+
+def test_llm_status_is_rendered():
+    analysis = LLMAnalysis(
+        key="paper",
+        analysis_type="miscitation",
+        status="failed",
+        error="model unavailable",
+    )
+
+    markdown = to_markdown([], {}, [analysis])
+
+    assert "**Status**: failed" in markdown
+    assert "**Error**: model unavailable" in markdown

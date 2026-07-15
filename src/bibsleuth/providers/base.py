@@ -39,10 +39,16 @@ class BaseProvider(ABC):
         cache: Cache | NullCache | None = None,
         user_agent: str = "bibsleuth/0.1",
         offline: bool = False,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         self.cache = cache or NullCache()
         self.user_agent = user_agent
         self.offline = offline
+        if timeout_seconds is not None:
+            self.timeout_seconds = timeout_seconds
+        if max_retries is not None:
+            self.max_retries = max_retries
         self._semaphore = asyncio.Semaphore(1)
         self._last_request = 0.0
         self._client: httpx.AsyncClient | None = None
@@ -87,6 +93,7 @@ class BaseProvider(ABC):
 
         cached = self.cache.get(self.provider_name, request_key)
         if cached:
+            self._raise_for_status(cached.status_code)
             return {
                 "_cache": True,
                 "status_code": cached.status_code,
@@ -94,7 +101,7 @@ class BaseProvider(ABC):
             }
 
         if self.offline:
-            raise ProviderError(f"{self.provider_name}: offline mode, no cache entry")
+            raise ProviderError("offline mode, no cache entry")
 
         request_headers = dict(headers or {})
         request_headers.setdefault("User-Agent", self.user_agent)
@@ -148,6 +155,14 @@ class BaseProvider(ABC):
                 data = {"raw": response.text}
 
             self.cache.set(self.provider_name, request_key, data, status_code)
+            self._raise_for_status(status_code)
             return {"_cache": False, "status_code": status_code, "data": data}
 
         raise ProviderError(last_error or "Request failed")
+
+    @staticmethod
+    def _raise_for_status(status_code: int) -> None:
+        """Raise for HTTP failures while allowing 404 to mean no match."""
+        if status_code == 404 or 200 <= status_code < 300:
+            return
+        raise ProviderError(f"HTTP {status_code}")

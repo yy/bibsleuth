@@ -45,6 +45,13 @@ class TestAuthorOverlap:
     def test_empty(self):
         assert author_overlap([], ["someone"]) == 0.0
 
+    def test_bibtex_family_given_matches_display_name(self):
+        score = author_overlap(
+            [r"Barab{\'a}si, Albert-L{\'a}szl{\'o}"],
+            ["Albert-Laszlo Barabasi"],
+        )
+        assert score == 1.0
+
 
 class TestYearScore:
     def test_exact(self):

@@ -42,6 +42,9 @@ async def suggest_citations(
 
     return LLMAnalysis(
         key="",
+        analysis_type="suggestions",
+        status="completed" if data else "failed",
+        error="" if data else "Model response did not contain valid JSON",
         claim=claim,
         section=context,
         explanation=response,

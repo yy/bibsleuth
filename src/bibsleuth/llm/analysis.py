@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Iterable
+from typing import Awaitable, Iterable, TypeVar
 
 from ..config import Config
-from ..providers.base import BaseProvider
+from ..providers.base import BaseProvider, ProviderError
 from ..types import (
     BibEntry,
+    Candidate,
     CitingContext,
     ClaimContext,
     LLMAnalysis,
@@ -20,6 +21,8 @@ from ..verify.existence import verify_entry
 from .contradictions import find_contradictions
 from .miscitation import check_miscitation
 from .suggestions import suggest_citations
+
+T = TypeVar("T")
 
 
 async def run_llm_analyses(
@@ -36,13 +39,34 @@ async def run_llm_analyses(
     result_by_key = {result.key: result for result in verify_results}
     providers_by_name = {provider.provider_name: provider for provider in providers}
 
+    selected_contexts = [
+        context for context in contexts if _section_matches(context.section, section)
+    ]
+    citation_limit = max(0, config.max_llm_citations)
+    omitted_citations = max(0, len(selected_contexts) - citation_limit)
+    selected_contexts = selected_contexts[:citation_limit]
     miscitation_tasks = [
         _run_miscitation(context, result_by_key, providers_by_name, config)
-        for context in contexts
-        if _section_matches(context.section, section)
+        for context in selected_contexts
     ]
-    for analysis in await _gather_present(miscitation_tasks):
+    for analysis in await _gather_present(
+        miscitation_tasks,
+        max_concurrency=config.max_concurrent_llm,
+    ):
         analyses.append(analysis)
+
+    if omitted_citations:
+        analyses.append(
+            LLMAnalysis(
+                key="",
+                analysis_type="citation_limit",
+                status="skipped",
+                error=(
+                    f"Skipped {omitted_citations} cited contexts due to "
+                    "max_llm_citations limit"
+                ),
+            )
+        )
 
     selected_claims = [
         claim
@@ -51,12 +75,27 @@ async def run_llm_analyses(
         and (not uncited_only or not claim.cited_keys)
         and _should_analyze_claim(claim.sentence)
     ]
+    claim_limit = max(0, config.max_llm_claims)
+    omitted_claims = max(0, len(selected_claims) - claim_limit)
+    selected_claims = selected_claims[:claim_limit]
     claim_tasks = [
-        _run_claim_analyses(claim, providers, config)
-        for claim in selected_claims
+        _run_claim_analyses(claim, providers, config) for claim in selected_claims
     ]
-    for claim_results in await _gather_present(claim_tasks):
+    for claim_results in await _gather_present(
+        claim_tasks,
+        max_concurrency=config.max_concurrent_llm,
+    ):
         analyses.extend(claim_results)
+
+    if omitted_claims:
+        analyses.append(
+            LLMAnalysis(
+                key="",
+                analysis_type="claim_limit",
+                status="skipped",
+                error=f"Skipped {omitted_claims} claims due to max_llm_claims limit",
+            )
+        )
 
     return analyses
 
@@ -66,23 +105,90 @@ async def _run_miscitation(
     result_by_key: dict[str, VerifyResult],
     providers_by_name: dict[str, BaseProvider],
     config: Config,
-) -> LLMAnalysis | None:
+) -> LLMAnalysis:
     result = result_by_key.get(context.key)
-    if not result or result.verdict not in {Verdict.VERIFIED, Verdict.LIKELY}:
-        return None
+    if not result:
+        return _miscitation_status(context, "skipped", "No verification result")
+    if result.verdict not in {Verdict.VERIFIED, Verdict.LIKELY}:
+        return _miscitation_status(
+            context,
+            "skipped",
+            f"Citation verification verdict is {result.verdict.value}",
+        )
     if not result.candidates:
-        return None
+        return _miscitation_status(context, "skipped", "No matched candidate")
 
-    candidate = result.candidates[0]
-    abstract = candidate.abstract
-    if not abstract:
-        provider = providers_by_name.get(candidate.provider)
-        if provider:
-            abstract = await provider.fetch_abstract(candidate)
-    if not abstract:
-        return None
+    try:
+        abstract = await _find_abstract(result.candidates, providers_by_name)
+        if not abstract:
+            return _miscitation_status(context, "skipped", "No abstract available")
+        return await check_miscitation(context, abstract, config)
+    except ImportError:
+        raise
+    except Exception as exc:
+        return _miscitation_status(context, "failed", str(exc))
 
-    return await check_miscitation(context, abstract, config)
+
+def _miscitation_status(
+    context: CitingContext,
+    status: str,
+    error: str,
+) -> LLMAnalysis:
+    return LLMAnalysis(
+        key=context.key,
+        analysis_type="miscitation",
+        status=status,
+        error=error,
+        claim=context.sentence,
+        section=context.section,
+    )
+
+
+async def _find_abstract(
+    candidates: list[Candidate],
+    providers_by_name: dict[str, BaseProvider],
+) -> str | None:
+    """Find or enrich an abstract for a verified candidate."""
+    for candidate in candidates:
+        abstract = await _fetch_abstract(candidate, providers_by_name)
+        if abstract:
+            return abstract
+
+    identifiers: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        for id_type, identifier in candidate.ids.items():
+            item = (id_type, identifier)
+            if item not in seen:
+                seen.add(item)
+                identifiers.append(item)
+
+    for id_type, identifier in identifiers:
+        for provider in providers_by_name.values():
+            try:
+                enriched_candidates = await provider.lookup_by_id(identifier, id_type)
+            except ProviderError:
+                continue
+            for candidate in enriched_candidates:
+                abstract = await _fetch_abstract(candidate, providers_by_name)
+                if abstract:
+                    return abstract
+    return None
+
+
+async def _fetch_abstract(
+    candidate: Candidate,
+    providers_by_name: dict[str, BaseProvider],
+) -> str | None:
+    if candidate.abstract:
+        return candidate.abstract
+    provider = providers_by_name.get(candidate.provider)
+    if not provider:
+        return None
+    try:
+        return await provider.fetch_abstract(candidate)
+    except ProviderError:
+        return None
 
 
 async def _run_claim_analyses(
@@ -90,32 +196,64 @@ async def _run_claim_analyses(
     providers: list[BaseProvider],
     config: Config,
 ) -> list[LLMAnalysis]:
-    suggestion_result, contradiction_result = await _gather_present(
-        [
-            suggest_citations(claim.sentence, claim.section or claim.sentence, config),
-            find_contradictions(
-                claim.sentence,
-                claim.section or claim.sentence,
+    calls = [
+        suggest_citations(claim.sentence, claim.section or claim.sentence, config),
+        find_contradictions(
+            claim.sentence,
+            claim.section or claim.sentence,
+            config,
+        ),
+    ]
+    raw_results: list[LLMAnalysis | Exception] = []
+    for call in calls:
+        try:
+            raw_results.append(await call)
+        except Exception as exc:
+            raw_results.append(exc)
+
+    labels = ("suggestions", "contradictions")
+    normalized_results: list[LLMAnalysis] = []
+    for label, result in zip(labels, raw_results, strict=True):
+        if isinstance(result, ImportError):
+            raise result
+        if isinstance(result, Exception):
+            normalized_results.append(
+                LLMAnalysis(
+                    key="",
+                    analysis_type=label,
+                    status="failed",
+                    error=str(result),
+                    claim=claim.sentence,
+                    section=claim.section,
+                )
+            )
+        else:
+            result.claim = claim.sentence
+            result.section = claim.section
+            normalized_results.append(result)
+
+    suggestion_result, contradiction_result = normalized_results
+
+    if suggestion_result.status == "completed":
+        try:
+            suggestion_result.suggested_papers = await _verify_llm_papers(
+                suggestion_result.suggested_papers,
+                providers,
                 config,
-            ),
-        ]
-    )
-
-    suggestion_result.claim = claim.sentence
-    suggestion_result.section = claim.section
-    contradiction_result.claim = claim.sentence
-    contradiction_result.section = claim.section
-
-    suggestion_result.suggested_papers = await _verify_llm_papers(
-        suggestion_result.suggested_papers,
-        providers,
-        config,
-    )
-    contradiction_result.contradictions = await _verify_llm_papers(
-        contradiction_result.contradictions,
-        providers,
-        config,
-    )
+            )
+        except Exception as exc:
+            suggestion_result.status = "failed"
+            suggestion_result.error = f"Paper verification failed: {exc}"
+    if contradiction_result.status == "completed":
+        try:
+            contradiction_result.contradictions = await _verify_llm_papers(
+                contradiction_result.contradictions,
+                providers,
+                config,
+            )
+        except Exception as exc:
+            contradiction_result.status = "failed"
+            contradiction_result.error = f"Paper verification failed: {exc}"
     return [suggestion_result, contradiction_result]
 
 
@@ -124,12 +262,19 @@ async def _verify_llm_papers(
     providers: list[BaseProvider],
     config: Config,
 ) -> list[dict]:
+    request_semaphore = asyncio.Semaphore(max(1, config.max_concurrent_providers))
     verified = await _gather_present(
         [
-            _verify_llm_paper(paper, providers, config)
+            _verify_llm_paper(
+                paper,
+                providers,
+                config,
+                request_semaphore=request_semaphore,
+            )
             for paper in papers
             if paper.get("title")
-        ]
+        ],
+        max_concurrency=config.max_concurrent_providers,
     )
     return verified
 
@@ -138,6 +283,7 @@ async def _verify_llm_paper(
     paper: dict,
     providers: list[BaseProvider],
     config: Config,
+    request_semaphore: asyncio.Semaphore | None = None,
 ) -> dict | None:
     fields = {"title": str(paper.get("title", ""))}
     authors = [str(author) for author in paper.get("authors", []) if author]
@@ -152,7 +298,12 @@ async def _verify_llm_paper(
         fields=fields,
         raw=json.dumps(paper),
     )
-    result = await verify_entry(entry, providers, config)
+    result = await verify_entry(
+        entry,
+        providers,
+        config,
+        request_semaphore=request_semaphore,
+    )
     if result.verdict not in {Verdict.VERIFIED, Verdict.LIKELY}:
         return None
 
@@ -170,8 +321,24 @@ async def _verify_llm_paper(
     return verified
 
 
-async def _gather_present(tasks: Iterable) -> list:
-    results = await asyncio.gather(*tasks)
+async def _gather_present(
+    tasks: Iterable[Awaitable[T]],
+    max_concurrency: int | None = None,
+) -> list[T]:
+    task_list = list(tasks)
+    if not task_list:
+        return []
+    if max_concurrency is None:
+        results = await asyncio.gather(*task_list)
+        return [result for result in results if result is not None]
+
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+    async def run(task: Awaitable[T]) -> T:
+        async with semaphore:
+            return await task
+
+    results = await asyncio.gather(*(run(task) for task in task_list))
     return [result for result in results if result is not None]
 
 

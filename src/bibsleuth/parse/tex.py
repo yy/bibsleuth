@@ -14,10 +14,15 @@ CITE_RE = re.compile(
     r"(?:\[[^\]]*\]){0,2}"  # optional prenote/postnote
     r"\{([^}]+)\}",
 )
+INCLUDE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 SECTION_RE = re.compile(
     r"\\(?:part|chapter|section|subsection|subsubsection)\*?\{([^}]+)\}"
 )
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|\n{2,}")
+
+
+class TexProjectError(RuntimeError):
+    """Raised when a multi-file TeX project cannot be resolved."""
 
 
 def _strip_tex_comments(text: str) -> str:
@@ -25,6 +30,61 @@ def _strip_tex_comments(text: str) -> str:
     for line in text.split("\n"):
         lines.append(re.sub(r"(?<!\\)%.*$", "", line))
     return "\n".join(lines)
+
+
+def _resolve_include_path(source_path: Path, include_name: str) -> Path:
+    include_path = Path(include_name.strip().strip("\"'"))
+    if not include_path.suffix:
+        include_path = include_path.with_suffix(".tex")
+    if not include_path.is_absolute():
+        include_path = source_path.parent / include_path
+    return include_path.resolve()
+
+
+def _read_tex_file(path: Path) -> str:
+    if not path.exists():
+        raise TexProjectError(f"TeX file not found: {path}")
+    if not path.is_file():
+        raise TexProjectError(f"TeX path is not a file: {path}")
+    try:
+        return _strip_tex_comments(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise TexProjectError(f"Could not read TeX file {path}: {exc}") from exc
+
+
+def _expand_tex_project(path: Path, stack: tuple[Path, ...] = ()) -> str:
+    path = path.resolve()
+    if path in stack:
+        cycle = " -> ".join(str(item) for item in (*stack, path))
+        raise TexProjectError(f"TeX include cycle detected: {cycle}")
+
+    text = _read_tex_file(path)
+    next_stack = (*stack, path)
+
+    def replace_include(match: re.Match[str]) -> str:
+        include_path = _resolve_include_path(path, match.group(1))
+        expanded = _expand_tex_project(include_path, next_stack)
+        return f"\n{expanded}\n"
+
+    return INCLUDE_RE.sub(replace_include, text)
+
+
+def _collect_tex_files(
+    path: Path,
+    stack: tuple[Path, ...] = (),
+) -> list[Path]:
+    path = path.resolve()
+    if path in stack:
+        cycle = " -> ".join(str(item) for item in (*stack, path))
+        raise TexProjectError(f"TeX include cycle detected: {cycle}")
+
+    text = _read_tex_file(path)
+    files = [path]
+    next_stack = (*stack, path)
+    for match in INCLUDE_RE.finditer(text):
+        include_path = _resolve_include_path(path, match.group(1))
+        files.extend(_collect_tex_files(include_path, next_stack))
+    return files
 
 
 def _clean_text_fragment(text: str) -> str:
@@ -97,7 +157,7 @@ def _extract_sentence(text: str, match_start: int, match_end: int) -> str:
 def extract_citations(path: str | Path) -> list[CitingContext]:
     """Extract all citation commands with context from a .tex file."""
     path = Path(path)
-    text = _strip_tex_comments(path.read_text(encoding="utf-8"))
+    text = _expand_tex_project(path)
     sections = _section_offsets(text)
     section_index = 0
     current_section = ""
@@ -133,7 +193,7 @@ def extract_citations(path: str | Path) -> list[CitingContext]:
 def extract_claims(path: str | Path) -> list[ClaimContext]:
     """Extract sentence-level claims and any citation keys they contain."""
     path = Path(path)
-    text = _strip_tex_comments(path.read_text(encoding="utf-8"))
+    text = _expand_tex_project(path)
     sections = _section_offsets(text)
     section_index = 0
     current_section = ""
@@ -162,21 +222,36 @@ def extract_claims(path: str | Path) -> list[ClaimContext]:
 
 def find_bib_path(tex_path: str | Path) -> Path | None:
     """Find the .bib file referenced by \\bibliography{} or \\addbibresource{}."""
-    tex_path = Path(tex_path)
-    text = _strip_tex_comments(tex_path.read_text(encoding="utf-8"))
+    paths = find_bib_paths(tex_path)
+    return paths[0] if paths else None
 
-    for pattern in [
-        r"\\bibliography\{([^}]+)\}",
-        r"\\addbibresource\{([^}]+)\}",
-    ]:
-        for match in re.finditer(pattern, text):
-            for bib_name in match.group(1).split(","):
-                bib_name = bib_name.strip().strip("\"'")
-                if not bib_name:
-                    continue
-                if not bib_name.endswith(".bib"):
-                    bib_name += ".bib"
-                bib_path = tex_path.parent / bib_name
-                if bib_path.exists():
-                    return bib_path
-    return None
+
+def find_bib_paths(tex_path: str | Path) -> list[Path]:
+    """Find all bibliography files referenced throughout a TeX project."""
+    tex_path = Path(tex_path)
+    bib_paths: list[Path] = []
+    seen: set[Path] = set()
+
+    for source_path in _collect_tex_files(tex_path):
+        text = _read_tex_file(source_path)
+        for pattern in [
+            r"\\bibliography\{([^}]+)\}",
+            r"\\addbibresource\{([^}]+)\}",
+        ]:
+            for match in re.finditer(pattern, text):
+                for bib_name in match.group(1).split(","):
+                    bib_name = bib_name.strip().strip("\"'")
+                    if not bib_name:
+                        continue
+                    if not bib_name.endswith(".bib"):
+                        bib_name += ".bib"
+                    bib_path = (source_path.parent / bib_name).resolve()
+                    if not bib_path.exists():
+                        raise TexProjectError(
+                            f"Bibliography file not found: {bib_path} "
+                            f"(referenced from {source_path})"
+                        )
+                    if bib_path not in seen:
+                        seen.add(bib_path)
+                        bib_paths.append(bib_path)
+    return bib_paths

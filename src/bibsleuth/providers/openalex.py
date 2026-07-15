@@ -6,6 +6,23 @@ from ..types import Candidate
 from .base import BaseProvider
 
 
+def _reconstruct_abstract(inverted_index: object) -> str | None:
+    if not isinstance(inverted_index, dict):
+        return None
+
+    positioned_words: list[tuple[int, str]] = []
+    for word, positions in inverted_index.items():
+        if not isinstance(word, str) or not isinstance(positions, list):
+            continue
+        for position in positions:
+            if isinstance(position, int):
+                positioned_words.append((position, word))
+    if not positioned_words:
+        return None
+    positioned_words.sort()
+    return " ".join(word for _, word in positioned_words)
+
+
 class OpenAlexProvider(BaseProvider):
     provider_name = "openalex"
     base_url = "https://api.openalex.org"
@@ -69,6 +86,10 @@ class OpenAlexProvider(BaseProvider):
         source = location.get("source") or {}
         venue = source.get("display_name") if isinstance(source, dict) else None
 
+        abstract = work.get("abstract") or _reconstruct_abstract(
+            work.get("abstract_inverted_index")
+        )
+
         return Candidate(
             provider=self.provider_name,
             provider_id=work.get("id", ""),
@@ -76,7 +97,7 @@ class OpenAlexProvider(BaseProvider):
             authors=authors,
             year=work.get("publication_year"),
             venue=venue,
-            abstract=work.get("abstract"),
+            abstract=abstract,
             ids=ids,
             url=work.get("doi") or work.get("id"),
         )

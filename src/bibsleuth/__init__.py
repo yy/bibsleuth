@@ -1,3 +1,8 @@
 """bibsleuth — citation verification and analysis for LaTeX papers."""
 
-__version__ = "0.1.3"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("bibsleuth")
+except PackageNotFoundError:  # pragma: no cover - source tree without installation
+    __version__ = "0+unknown"

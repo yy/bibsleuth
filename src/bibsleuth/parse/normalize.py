@@ -113,7 +113,14 @@ def author_family_names(authors: list[str]) -> list[str]:
     seen: set[str] = set()
     families: list[str] = []
     for author in authors:
-        normalized = normalize_author_name(author)
+        stripped = author.strip()
+        is_braced_name = stripped.startswith("{") and stripped.endswith("}")
+        family_source = (
+            stripped.split(",", 1)[0]
+            if "," in stripped and not is_braced_name
+            else stripped
+        )
+        normalized = normalize_author_name(family_source)
         if not normalized:
             continue
         parts = normalized.split()

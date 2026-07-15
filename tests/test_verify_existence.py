@@ -5,7 +5,7 @@ import asyncio
 from bibsleuth.config import Config
 from bibsleuth.providers.base import ProviderError
 from bibsleuth.types import BibEntry, Candidate, Verdict
-from bibsleuth.verify.existence import verify_entry
+from bibsleuth.verify.existence import verify_entries, verify_entry
 
 
 class FailingProvider:
@@ -183,3 +183,102 @@ def test_result_includes_entry_type_and_category():
     result = asyncio.run(verify_entry(entry, [RankedProvider()], Config()))
     assert result.entry_type == "article"
     assert result.category == "academic"
+
+
+def test_exact_doi_match_is_verified_with_sparse_metadata():
+    class DOIProvider:
+        provider_name = "doi"
+        supported_categories = frozenset({"academic"})
+        min_delay_seconds = 0.0
+
+        async def lookup_by_id(self, identifier, id_type):
+            assert (identifier, id_type) == ("10.1000/example", "doi")
+            return [
+                Candidate(
+                    provider=self.provider_name,
+                    provider_id="doi-result",
+                    title="Exact Title",
+                    ids={"doi": "10.1000/example"},
+                )
+            ]
+
+        async def search(self, title, authors=None, year=None):
+            raise AssertionError("An exact DOI result should not need title search")
+
+    entry = BibEntry(
+        key="sparse",
+        entry_type="article",
+        fields={
+            "title": "Exact Title",
+            "doi": "https://doi.org/10.1000/EXAMPLE",
+        },
+    )
+
+    result = asyncio.run(verify_entry(entry, [DOIProvider()], Config()))
+
+    assert result.verdict == Verdict.VERIFIED
+    assert result.score == 1.0
+    assert "DOI" in result.reasons[0]
+
+
+def test_exact_doi_with_conflicting_title_is_flagged():
+    class DOIProvider:
+        provider_name = "doi"
+        supported_categories = frozenset({"academic"})
+        min_delay_seconds = 0.0
+
+        async def lookup_by_id(self, identifier, id_type):
+            return [
+                Candidate(
+                    provider=self.provider_name,
+                    provider_id="doi-result",
+                    title="A Completely Different Paper",
+                    ids={"doi": identifier},
+                )
+            ]
+
+        async def search(self, title, authors=None, year=None):
+            raise AssertionError("An exact DOI result should not need title search")
+
+    entry = BibEntry(
+        key="conflict",
+        entry_type="article",
+        fields={"title": "Network Science", "doi": "10.1000/example"},
+    )
+
+    result = asyncio.run(verify_entry(entry, [DOIProvider()], Config()))
+
+    assert result.verdict == Verdict.CONFLICT
+    assert "conflicting title" in result.reasons[0]
+
+
+def test_verify_entries_bounds_provider_concurrency():
+    active = 0
+    max_active = 0
+
+    class SlowProvider:
+        provider_name = "slow"
+        supported_categories = frozenset({"academic"})
+        min_delay_seconds = 0.0
+
+        async def lookup_by_id(self, identifier, id_type):
+            return []
+
+        async def search(self, title, authors=None, year=None):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return []
+
+    entries = [
+        BibEntry(key=str(index), entry_type="article", fields={"title": str(index)})
+        for index in range(8)
+    ]
+    config = Config(max_concurrent_providers=2)
+
+    results = asyncio.run(verify_entries(entries, [SlowProvider()], config))
+
+    assert len(results) == len(entries)
+    assert max_active == 2

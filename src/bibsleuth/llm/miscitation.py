@@ -44,6 +44,9 @@ async def check_miscitation(
 
     return LLMAnalysis(
         key=context.key,
+        analysis_type="miscitation",
+        status="completed" if data else "failed",
+        error="" if data else "Model response did not contain valid JSON",
         claim=context.sentence,
         section=context.section,
         supported=supported,

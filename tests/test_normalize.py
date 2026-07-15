@@ -70,3 +70,8 @@ class TestAuthorFamilyNames:
 
     def test_single_name(self):
         assert author_family_names(["Madonna"]) == ["madonna"]
+
+    def test_bibtex_family_given_name(self):
+        assert author_family_names([r"Barab{\'a}si, Albert-L{\'a}szl{\'o}"]) == [
+            "barabasi"
+        ]

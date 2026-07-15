@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 
 from ..config import Config
@@ -16,7 +17,7 @@ from ..types import (
     VerifyResult,
     classify_entry_type,
 )
-from .scoring import score_candidate
+from .scoring import score_candidate, title_similarity
 
 
 @dataclass
@@ -30,18 +31,21 @@ class ProviderCheckResult:
 async def _check_entry_against_provider(
     entry: BibEntry,
     provider: BaseProvider,
+    request_semaphore: asyncio.Semaphore | None = None,
 ) -> ProviderCheckResult:
     """Query a single provider for a single entry."""
     result = ProviderCheckResult(provider=provider.provider_name)
 
     # Try ID-based lookup first
-    ids = extract_ids(entry.raw or "")
-    if entry.doi:
-        ids.setdefault("doi", entry.doi)
+    ids = _entry_identifiers(entry)
 
     for id_type, identifier in ids.items():
         try:
-            candidates = await provider.lookup_by_id(identifier, id_type)
+            if request_semaphore:
+                async with request_semaphore:
+                    candidates = await provider.lookup_by_id(identifier, id_type)
+            else:
+                candidates = await provider.lookup_by_id(identifier, id_type)
             result.had_successful_query = True
             result.candidates.extend(candidates)
         except ProviderError as exc:
@@ -51,11 +55,19 @@ async def _check_entry_against_provider(
     if not result.candidates and entry.title:
         try:
             year = int(entry.year) if entry.year else None
-            candidates = await provider.search(
-                title=entry.title,
-                authors=entry.authors[:1] if entry.authors else None,
-                year=year,
-            )
+            if request_semaphore:
+                async with request_semaphore:
+                    candidates = await provider.search(
+                        title=entry.title,
+                        authors=entry.authors[:1] if entry.authors else None,
+                        year=year,
+                    )
+            else:
+                candidates = await provider.search(
+                    title=entry.title,
+                    authors=entry.authors[:1] if entry.authors else None,
+                    year=year,
+                )
             result.had_successful_query = True
             result.candidates.extend(candidates)
         except ProviderError as exc:
@@ -71,9 +83,7 @@ def _filter_providers(
 ) -> list[BaseProvider]:
     """Filter providers based on entry category and available IDs."""
     cat_value = category.value
-    ids = extract_ids(entry.raw or "")
-    if entry.doi:
-        ids.setdefault("doi", entry.doi)
+    ids = _entry_identifiers(entry)
 
     filtered = []
     for p in providers:
@@ -89,9 +99,12 @@ def _filter_providers(
 async def _run_checks(
     entry: BibEntry,
     providers: list[BaseProvider],
+    request_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[list[ProviderCheckResult], list[str]]:
     """Run checks against providers, return (checks, errors)."""
-    tasks = [_check_entry_against_provider(entry, p) for p in providers]
+    tasks = [
+        _check_entry_against_provider(entry, p, request_semaphore) for p in providers
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     checks: list[ProviderCheckResult] = []
@@ -112,8 +125,11 @@ async def verify_entry(
     entry: BibEntry,
     providers: list[BaseProvider],
     config: Config,
+    request_semaphore: asyncio.Semaphore | None = None,
 ) -> VerifyResult:
     """Verify a single entry against providers, with entry-type routing."""
+    if request_semaphore is None:
+        request_semaphore = asyncio.Semaphore(max(1, config.max_concurrent_providers))
     category = classify_entry_type(entry.entry_type)
     meta = {"entry_type": entry.entry_type, "category": category.value}
 
@@ -156,7 +172,7 @@ async def verify_entry(
     successful_queries = 0
 
     if entry.doi and fast:
-        checks, _ = await _run_checks(entry, fast)
+        checks, _ = await _run_checks(entry, fast, request_semaphore)
         for check in checks:
             all_candidates.extend(check.candidates)
             errors.extend(check.errors)
@@ -166,13 +182,7 @@ async def verify_entry(
         # Check if we already have a verified match — skip slow providers
         if all_candidates:
             deduped = _dedupe_candidates(all_candidates)
-            ref_fields = {
-                "title": entry.title,
-                "authors": entry.authors,
-                "year": entry.year,
-                "venue": entry.venue,
-            }
-            ranked = _rank_candidates(ref_fields, deduped)
+            ranked = _rank_candidates(entry, deduped)
             if ranked[0][0] >= config.verified_threshold:
                 return _build_result(entry, ranked, config, **meta)
 
@@ -183,7 +193,7 @@ async def verify_entry(
         remaining = eligible
 
     if remaining:
-        checks, _ = await _run_checks(entry, remaining)
+        checks, _ = await _run_checks(entry, remaining, request_semaphore)
         for check in checks:
             all_candidates.extend(check.candidates)
             errors.extend(check.errors)
@@ -214,13 +224,7 @@ async def verify_entry(
         )
 
     # Score and rank candidates
-    ref_fields = {
-        "title": entry.title,
-        "authors": entry.authors,
-        "year": entry.year,
-        "venue": entry.venue,
-    }
-    ranked_candidates = _rank_candidates(ref_fields, all_candidates)
+    ranked_candidates = _rank_candidates(entry, all_candidates)
     return _build_result(entry, ranked_candidates, config, **meta)
 
 
@@ -234,9 +238,24 @@ def _build_result(
     best_score, best_candidate = ranked_candidates[0]
     scored_candidates = [candidate for _, candidate in ranked_candidates]
 
-    if best_score >= config.verified_threshold:
+    matching_id = _matching_identifier(entry, best_candidate)
+    title_conflict = bool(
+        matching_id
+        and entry.title
+        and best_candidate.title
+        and title_similarity(entry.title, best_candidate.title) < 0.5
+    )
+
+    if title_conflict:
+        verdict = Verdict.CONFLICT
+        reasons = [f"Exact {matching_id.upper()} resolves to a conflicting title"]
+    elif best_score >= config.verified_threshold:
         verdict = Verdict.VERIFIED
-        reasons = [f"Matched with score {best_score:.2f}"]
+        reasons = (
+            [f"Matched exact {matching_id.upper()}"]
+            if matching_id
+            else [f"Matched with score {best_score:.2f}"]
+        )
     elif best_score >= config.likely_threshold:
         verdict = Verdict.LIKELY
         reasons = [f"Likely match with score {best_score:.2f}"]
@@ -267,15 +286,39 @@ async def verify_entries(
     providers: list[BaseProvider],
     config: Config,
 ) -> list[VerifyResult]:
-    """Verify all entries concurrently."""
-    tasks = [verify_entry(entry, providers, config) for entry in entries]
-    return await asyncio.gather(*tasks)
+    """Verify entries with bounded task and provider-request concurrency."""
+    if not entries:
+        return []
+
+    limit = max(1, config.max_concurrent_providers)
+    request_semaphore = asyncio.Semaphore(limit)
+    work = iter(enumerate(entries))
+    results: list[VerifyResult | None] = [None] * len(entries)
+
+    async def worker() -> None:
+        for index, entry in work:
+            results[index] = await verify_entry(
+                entry,
+                providers,
+                config,
+                request_semaphore=request_semaphore,
+            )
+
+    workers = [asyncio.create_task(worker()) for _ in range(min(limit, len(entries)))]
+    await asyncio.gather(*workers)
+    return [result for result in results if result is not None]
 
 
 def _rank_candidates(
-    ref_fields: dict[str, object],
+    entry: BibEntry,
     candidates: list[Candidate],
 ) -> list[tuple[float, Candidate]]:
+    ref_fields = {
+        "title": entry.title,
+        "authors": entry.authors,
+        "year": entry.year,
+        "venue": entry.venue,
+    }
     ranked: list[tuple[float, Candidate]] = []
     for candidate in candidates:
         cand_fields = {
@@ -285,9 +328,50 @@ def _rank_candidates(
             "venue": candidate.venue or "",
         }
         score, _ = score_candidate(ref_fields, cand_fields)
+        if _matching_identifier(entry, candidate):
+            score = 1.0
         ranked.append((score, candidate))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked
+
+
+def _matching_identifier(entry: BibEntry, candidate: Candidate) -> str | None:
+    entry_ids = _entry_identifiers(entry)
+
+    for id_type, entry_value in entry_ids.items():
+        candidate_value = candidate.ids.get(id_type)
+        if not candidate_value:
+            continue
+        if _normalize_identifier(id_type, entry_value) == _normalize_identifier(
+            id_type, candidate_value
+        ):
+            return id_type
+    return None
+
+
+def _entry_identifiers(entry: BibEntry) -> dict[str, str]:
+    identifiers = extract_ids(entry.raw or "")
+    if entry.doi:
+        identifiers["doi"] = entry.doi
+    return {
+        id_type: _normalize_identifier(id_type, identifier)
+        for id_type, identifier in identifiers.items()
+    }
+
+
+def _normalize_identifier(id_type: str, value: str) -> str:
+    normalized = str(value).strip().lower()
+    if id_type == "doi":
+        for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+                break
+        return normalized.rstrip('.,;:()[]{}<>"')
+    if id_type == "arxiv":
+        return normalized.removeprefix("arxiv:")
+    if id_type == "isbn":
+        return re.sub(r"[^0-9x]", "", normalized)
+    return normalized
 
 
 def _dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:

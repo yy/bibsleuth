@@ -69,6 +69,9 @@ def to_json(
         "llm_results": [
             {
                 "key": analysis.key,
+                "analysis_type": analysis.analysis_type,
+                "status": analysis.status,
+                "error": analysis.error,
                 "claim": analysis.claim,
                 "section": analysis.section,
                 "supported": analysis.supported,
@@ -187,6 +190,11 @@ def to_markdown(
             else:
                 lines.append("### Claim Analysis\n")
 
+            if analysis.analysis_type:
+                lines.append(f"- **Analysis**: {analysis.analysis_type}")
+            lines.append(f"- **Status**: {analysis.status}")
+            if analysis.error:
+                lines.append(f"- **Error**: {analysis.error}")
             if analysis.section:
                 lines.append(f"- **Section**: {analysis.section}")
             if analysis.claim:
@@ -212,17 +220,27 @@ def write_reports(
     config: dict,
     output_path: str | Path,
     llm_results: list[LLMAnalysis] | None = None,
-) -> None:
-    """Write both JSON and Markdown reports."""
+    output_format: str = "both",
+) -> list[Path]:
+    """Write reports in the requested format and return the created paths."""
+    if output_format not in {"json", "md", "both"}:
+        raise ValueError(f"Unsupported report format: {output_format}")
+
     output_path = Path(output_path)
     json_path = output_path.with_suffix(".json")
     md_path = output_path.with_suffix(".md")
+    written: list[Path] = []
 
-    json_path.write_text(
-        to_json(results, config, llm_results=llm_results),
-        encoding="utf-8",
-    )
-    md_path.write_text(
-        to_markdown(results, config, llm_results=llm_results),
-        encoding="utf-8",
-    )
+    if output_format in {"json", "both"}:
+        json_path.write_text(
+            to_json(results, config, llm_results=llm_results),
+            encoding="utf-8",
+        )
+        written.append(json_path)
+    if output_format in {"md", "both"}:
+        md_path.write_text(
+            to_markdown(results, config, llm_results=llm_results),
+            encoding="utf-8",
+        )
+        written.append(md_path)
+    return written
