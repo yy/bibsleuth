@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from ..config import Config
 from ..parse.extract_ids import extract_ids
+from ..parse.normalize import normalize_title
 from ..providers.base import BaseProvider, ProviderError
 from ..types import (
     BibEntry,
@@ -228,6 +229,13 @@ async def verify_entry(
     return _build_result(entry, ranked_candidates, config, **meta)
 
 
+def _same_main_title(title_a: str, title_b: str) -> bool:
+    """True when the titles match before any subtitle (e.g., one source drops it)."""
+    main_a = normalize_title(title_a.split(":", 1)[0])
+    main_b = normalize_title(title_b.split(":", 1)[0])
+    return bool(main_a) and main_a == main_b
+
+
 def _build_result(
     entry: BibEntry,
     ranked_candidates: list[tuple[float, Candidate]],
@@ -244,6 +252,7 @@ def _build_result(
         and entry.title
         and best_candidate.title
         and title_similarity(entry.title, best_candidate.title) < 0.5
+        and not _same_main_title(entry.title, best_candidate.title)
     )
 
     if title_conflict:
