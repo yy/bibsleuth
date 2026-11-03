@@ -252,6 +252,40 @@ def test_exact_doi_with_conflicting_title_is_flagged():
     assert "conflicting title" in result.reasons[0]
 
 
+def test_exact_doi_with_dropped_subtitle_is_not_a_conflict():
+    class DOIProvider:
+        provider_name = "doi"
+        supported_categories = frozenset({"academic"})
+        min_delay_seconds = 0.0
+
+        async def lookup_by_id(self, identifier, id_type):
+            return [
+                Candidate(
+                    provider=self.provider_name,
+                    provider_id="doi-result",
+                    title="Closing the AI accountability gap",
+                    ids={"doi": identifier},
+                )
+            ]
+
+        async def search(self, title, authors=None, year=None):
+            raise AssertionError("An exact DOI result should not need title search")
+
+    entry = BibEntry(
+        key="subtitle",
+        entry_type="inproceedings",
+        fields={
+            "title": "Closing the {{AI}} Accountability Gap: Defining an "
+            "End-to-End Framework for Internal Algorithmic Auditing",
+            "doi": "10.1145/3351095.3372873",
+        },
+    )
+
+    result = asyncio.run(verify_entry(entry, [DOIProvider()], Config()))
+
+    assert result.verdict != Verdict.CONFLICT
+
+
 def test_verify_entries_bounds_provider_concurrency():
     active = 0
     max_active = 0
