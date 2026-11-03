@@ -80,6 +80,37 @@ def test_extract_citations_recurses_through_inputs(tmp_path):
     assert contexts[0].section == "Introduction"
 
 
+def test_nested_inputs_resolve_relative_to_root(tmp_path):
+    # LaTeX resolves \input against the root file's directory, so a file in
+    # si/ that inputs sections/summary means <root>/sections/summary.tex.
+    (tmp_path / "si").mkdir()
+    (tmp_path / "sections").mkdir()
+    root = tmp_path / "paper.tex"
+    root.write_text("\\input{si/protocol}\n", encoding="utf-8")
+    (tmp_path / "si" / "protocol.tex").write_text(
+        "\\input{sections/summary}\n", encoding="utf-8"
+    )
+    (tmp_path / "sections" / "summary.tex").write_text(
+        "Summary claim \\cite{summary}.\n", encoding="utf-8"
+    )
+
+    assert [context.key for context in extract_citations(root)] == ["summary"]
+
+
+def test_nested_bibliography_resolves_relative_to_root(tmp_path):
+    (tmp_path / "sections").mkdir()
+    (tmp_path / "refs").mkdir()
+    bib = tmp_path / "refs" / "references.bib"
+    bib.write_text("", encoding="utf-8")
+    root = tmp_path / "paper.tex"
+    root.write_text("\\input{sections/end}\n", encoding="utf-8")
+    (tmp_path / "sections" / "end.tex").write_text(
+        "\\bibliography{refs/references}\n", encoding="utf-8"
+    )
+
+    assert find_bib_paths(root) == [bib.resolve()]
+
+
 def test_find_bib_paths_across_project_files(tmp_path):
     sections = tmp_path / "sections"
     sections.mkdir()
