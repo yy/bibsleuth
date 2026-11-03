@@ -32,13 +32,25 @@ def _strip_tex_comments(text: str) -> str:
     return "\n".join(lines)
 
 
-def _resolve_include_path(source_path: Path, include_name: str) -> Path:
+def _resolve_project_path(root_dir: Path, source_path: Path, name: Path) -> Path:
+    """Resolve a path the way LaTeX does: relative to the root file's directory.
+
+    Falls back to the including file's directory, which some projects rely on.
+    """
+    if name.is_absolute():
+        return name.resolve()
+    candidates = [root_dir / name, source_path.parent / name]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return candidates[0].resolve()
+
+
+def _resolve_include_path(root_dir: Path, source_path: Path, include_name: str) -> Path:
     include_path = Path(include_name.strip().strip("\"'"))
     if not include_path.suffix:
         include_path = include_path.with_suffix(".tex")
-    if not include_path.is_absolute():
-        include_path = source_path.parent / include_path
-    return include_path.resolve()
+    return _resolve_project_path(root_dir, source_path, include_path)
 
 
 def _read_tex_file(path: Path) -> str:
@@ -52,8 +64,13 @@ def _read_tex_file(path: Path) -> str:
         raise TexProjectError(f"Could not read TeX file {path}: {exc}") from exc
 
 
-def _expand_tex_project(path: Path, stack: tuple[Path, ...] = ()) -> str:
+def _expand_tex_project(
+    path: Path,
+    stack: tuple[Path, ...] = (),
+    root_dir: Path | None = None,
+) -> str:
     path = path.resolve()
+    root_dir = root_dir or path.parent
     if path in stack:
         cycle = " -> ".join(str(item) for item in (*stack, path))
         raise TexProjectError(f"TeX include cycle detected: {cycle}")
@@ -62,8 +79,8 @@ def _expand_tex_project(path: Path, stack: tuple[Path, ...] = ()) -> str:
     next_stack = (*stack, path)
 
     def replace_include(match: re.Match[str]) -> str:
-        include_path = _resolve_include_path(path, match.group(1))
-        expanded = _expand_tex_project(include_path, next_stack)
+        include_path = _resolve_include_path(root_dir, path, match.group(1))
+        expanded = _expand_tex_project(include_path, next_stack, root_dir)
         return f"\n{expanded}\n"
 
     return INCLUDE_RE.sub(replace_include, text)
@@ -72,8 +89,10 @@ def _expand_tex_project(path: Path, stack: tuple[Path, ...] = ()) -> str:
 def _collect_tex_files(
     path: Path,
     stack: tuple[Path, ...] = (),
+    root_dir: Path | None = None,
 ) -> list[Path]:
     path = path.resolve()
+    root_dir = root_dir or path.parent
     if path in stack:
         cycle = " -> ".join(str(item) for item in (*stack, path))
         raise TexProjectError(f"TeX include cycle detected: {cycle}")
@@ -82,8 +101,8 @@ def _collect_tex_files(
     files = [path]
     next_stack = (*stack, path)
     for match in INCLUDE_RE.finditer(text):
-        include_path = _resolve_include_path(path, match.group(1))
-        files.extend(_collect_tex_files(include_path, next_stack))
+        include_path = _resolve_include_path(root_dir, path, match.group(1))
+        files.extend(_collect_tex_files(include_path, next_stack, root_dir))
     return files
 
 
@@ -229,6 +248,7 @@ def find_bib_path(tex_path: str | Path) -> Path | None:
 def find_bib_paths(tex_path: str | Path) -> list[Path]:
     """Find all bibliography files referenced throughout a TeX project."""
     tex_path = Path(tex_path)
+    root_dir = tex_path.resolve().parent
     bib_paths: list[Path] = []
     seen: set[Path] = set()
 
@@ -245,7 +265,9 @@ def find_bib_paths(tex_path: str | Path) -> list[Path]:
                         continue
                     if not bib_name.endswith(".bib"):
                         bib_name += ".bib"
-                    bib_path = (source_path.parent / bib_name).resolve()
+                    bib_path = _resolve_project_path(
+                        root_dir, source_path, Path(bib_name)
+                    )
                     if not bib_path.exists():
                         raise TexProjectError(
                             f"Bibliography file not found: {bib_path} "
